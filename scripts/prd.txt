@@ -1,0 +1,300 @@
+# PRD: LinkedIn comment tracker extension
+
+## 1. Product overview
+
+### 1.1 Document title and version
+
+* PRD: LinkedIn comment tracker extension
+* Version: 1.0
+
+### 1.2 Product summary
+
+The LinkedIn comment tracker extension is a Chrome plugin that injects a collapsible sidebar into the LinkedIn web app. Its primary function is to count and display the number of comments a user makes each day, helping to gamify engagement through a progress bar that compares current performance against a daily goal.
+
+Comment events are detected in real time and sent via POST requests to a remote API, which stores the data in a PostgreSQL database. The UI remains minimal and unobtrusive, collapsing automatically when not in use, so as not to interfere with the standard LinkedIn experience.
+
+Inspired by tools like Twemex and Blackmagic.so, this extension aims to replicate core features such as goal setting, real-time progress updates, and lightweight UI, laying the foundation for future enhancements like leaderboards or historical analytics.
+
+## 2. Goals
+
+### 2.1 Business goals
+
+* Increase daily active usage of the extension by tracking and gamifying LinkedIn commenting.
+* Collect engagement data to inform potential premium features or coaching services.
+* Position the tool as an essential productivity enhancer for LinkedIn power users.
+
+### 2.2 User goals
+
+* Easily monitor daily comment volume against a personal goal.
+* Gamify the commenting routine to boost consistency and growth on LinkedIn.
+* Keep the sidebar out of the way to avoid disrupting the browsing experience.
+
+### 2.3 Non-goals
+
+* Analyzing comment content or sentiment.
+* Displaying comments in the sidebar.
+* Managing historical data beyond the current day.
+
+## 3. User personas
+
+### 3.1 Key user types
+
+* Active networkers
+* Content marketers
+* Sales professionals
+
+### 3.2 Basic persona details
+
+* **Active networkers**: Professionals aiming to grow their network through frequent engagement.
+* **Content marketers**: Individuals who comment to amplify brand messaging and drive content discovery.
+* **Sales professionals**: Users who leverage comments to generate leads and build relationships.
+
+### 3.3 Role-based access
+
+* **Registered user**: Must authenticate via API key or OAuth to link comment counts to personal account; can set goals and view progress.
+* **Guest**: Can install and view default sidebar UI but cannot save counts remotely without authentication.
+
+## 4. Functional requirements
+
+* **Sidebar injection** (Priority: High)
+
+  * Inject a collapsible sidebar into LinkedIn feed pages.
+  * Load asynchronously to avoid blocking page rendering.
+* **Comment detection** (Priority: High)
+
+  * Detect when the user submits a comment on any LinkedIn post.
+  * Increment local count and display immediate feedback in sidebar.
+* **Progress bar and goal setting** (Priority: High)
+
+  * Allow users to set a daily comment goal.
+  * Render a progress bar that updates with each comment.
+* **Remote tracking** (Priority: High)
+
+  * Send a POST request to a configurable API endpoint for each comment event.
+  * Include user identifier, timestamp, and comment metadata.
+* **Authentication** (Priority: Medium)
+
+  * Support API key or OAuth flow to authenticate user before sending data.
+  * Store credentials securely.
+* **Collapsible UI** (Priority: Medium)
+
+  * Sidebar should collapse to a thin icon or auto-hide when browsing.
+  * Expand on hover or click.
+* **Error handling and retry** (Priority: Medium)
+
+  * Queue failed POST requests and retry at configurable intervals.
+  * Notify user of persistent failures in the UI.
+* **Configuration panel** (Priority: Low)
+
+  * Allow users to configure API endpoint, daily goal, and authentication settings.
+
+## 5. User experience
+
+### 5.1 Entry points & first-time user flow
+
+* User installs extension from Chrome Web Store.
+* On first LinkedIn visit, sidebar appears with onboarding tooltip.
+* Prompt user to authenticate and set a daily comment goal.
+* After setup, sidebar collapses until a comment is detected.
+
+### 5.2 Core experience
+
+* **Detect comment submission**: When the user posts a comment, the extension increments the count.
+
+  * The count update animates the progress bar to reinforce achievement.
+* **View progress**: Sidebar displays “X of Y comments today” and a colored progress bar.
+
+  * Progress bar fills from left to right; turns green when goal reached.
+* **Collapse sidebar**: User can collapse manually or let it auto-hide to avoid distraction.
+
+  * Hovering or clicking the sidebar icon expands it again.
+
+### 5.3 Advanced features & edge cases
+
+* Queueing offline events when the user is disconnected; sync on reconnect.
+* Handling multiple LinkedIn tabs: dedupe comment events per tab.
+* Reset daily count at midnight local time.
+* Prevent duplicate count on comment edits or retries.
+
+### 5.4 UI/UX highlights
+
+* Minimalist sidebar with a progress bar and numeric indicator.
+* Smooth collapse/expand animations.
+* Onboarding tooltip guiding through goal setup.
+* Color-coded progress states (e.g., red, yellow, green).
+
+## 6. Narrative
+
+Jordan is a content marketer who wants to boost their LinkedIn engagement by consistently commenting on posts each day. They install the comment tracker extension, authenticate with their API credentials, and set a goal of 10 comments per day. As they browse and comment, the sidebar unobtrusively updates their progress, turning green once they reach their goal and motivating them to engage more. At midnight, their count resets, ready for a fresh start tomorrow.
+
+## 7. Success metrics
+
+### 7.1 User-centric metrics
+
+* Percentage of users who set a daily goal after installation.
+* Average daily comment count per user.
+* Daily active users (DAU) engaging with the sidebar.
+
+### 7.2 Business metrics
+
+* Conversion rate from free to premium features (future).
+* Retention rate at 7 and 30 days.
+* API usage volume (comments tracked per day).
+
+### 7.3 Technical metrics
+
+* Average latency for POST request acknowledgment (<200 ms).
+* Sidebar load time (<100 ms) on LinkedIn pages.
+* Error rate for failed or dropped comment events (<1%).
+
+## 8. Technical considerations
+
+### 8.1 Integration points
+
+* LinkedIn web DOM for comment detection.
+* Remote API endpoint (configurable URL).
+* Chrome storage API for settings and credentials.
+
+### 8.2 Data storage & privacy
+
+* Store only event metadata; no comment content or personal data.
+* Encrypt API keys in Chrome secure storage.
+* Comply with LinkedIn terms of service and privacy policies.
+
+### 8.3 Scalability & performance
+
+* Batch retries for failed events to minimize network overhead.
+* Debounce comment detection to avoid duplicate counts.
+* Lazy-load sidebar resources.
+
+### 8.4 Potential challenges
+
+* Changes to LinkedIn’s DOM structure breaking detection logic.
+* Rate-limiting by API endpoint if usage spikes.
+* Handling user time zones for daily resets.
+
+## 9. Milestones & sequencing
+
+### 9.1 Project estimate
+
+* Small: 2–4 weeks
+
+### 9.2 Team size & composition
+
+* Small team: 2–3 people
+
+  * 1 product manager
+  * 1–2 engineers
+  * 1 designer (shared role)
+
+### 9.3 Suggested phases
+
+* **Phase 1**: core commenting and local UI (1 week)
+
+  * Key deliverables: sidebar injection, comment detection, progress bar.
+* **Phase 2**: remote tracking and authentication (1 week)
+
+  * Key deliverables: POST requests, error handling, credential storage.
+* **Phase 3**: collapse/expand and configuration (1 week)
+
+  * Key deliverables: collapsible UI, settings panel, onboarding.
+* **Phase 4**: testing and launch (1 week)
+
+  * Key deliverables: end-to-end QA, performance tuning, Chrome Store submission.
+
+## 10. User stories
+
+### 10.1 install and view sidebar
+
+* **ID**: US-001
+* **Description**: As a guest, I want to install the extension and see the sidebar appear on LinkedIn so that I know the tool is ready.
+* **Acceptance criteria**:
+
+  * Sidebar is injected into LinkedIn feed pages after installation.
+  * Onboarding tooltip appears on first load.
+
+### 10.2 authenticate with api
+
+* **ID**: US-002
+* **Description**: As a registered user, I want to authenticate via API key or OAuth so that my comment data is linked to my account.
+* **Acceptance criteria**:
+
+  * Extension prompts for credentials on first use.
+  * Credentials are validated with a test POST request.
+  * Successful authentication hides the prompt.
+
+### 10.3 set daily comment goal
+
+* **ID**: US-003
+* **Description**: As a user, I want to set my daily comment goal so that I can track progress.
+* **Acceptance criteria**:
+
+  * User can input a numeric goal in settings.
+  * Sidebar displays the configured goal.
+  * Goal persists across browser sessions.
+
+### 10.4 detect and count comments
+
+* **ID**: US-004
+* **Description**: As a user, I want the extension to detect when I post a comment on LinkedIn so that it increments my count.
+* **Acceptance criteria**:
+
+  * Each comment submission triggers a count increment.
+  * Sidebar updates immediately with new count.
+
+### 10.5 send comment event to api
+
+* **ID**: US-005
+* **Description**: As a user, I want each comment event to be sent to the remote API so that my data is stored persistently.
+* **Acceptance criteria**:
+
+  * POST request includes user ID, timestamp, and event type.
+  * Requests succeed with 2xx response codes.
+  * Failures are queued for retry.
+
+### 10.6 view progress bar
+
+* **ID**: US-006
+* **Description**: As a user, I want to see a progress bar showing “current/goal” so that I can gauge my performance.
+* **Acceptance criteria**:
+
+  * Progress bar fills proportionally to comment count.
+  * Color changes when goal is reached.
+
+### 10.7 collapse and expand sidebar
+
+* **ID**: US-007
+* **Description**: As a user, I want to collapse the sidebar into an icon and expand it on hover so that it stays out of my way.
+* **Acceptance criteria**:
+
+  * Sidebar collapses to an icon on click.
+  * Hovering or clicking the icon restores the sidebar.
+
+### 10.8 handle network failures
+
+* **ID**: US-008
+* **Description**: As a user, I want the extension to queue failed POST requests and retry so that no events are lost.
+* **Acceptance criteria**:
+
+  * Failed requests are stored locally.
+  * Retry occurs every 5 minutes until success.
+  * User receives a notification if retries exceed 3 attempts.
+
+### 10.9 reset daily count
+
+* **ID**: US-009
+* **Description**: As a user, I want my comment count to reset at midnight local time so that I start fresh each day.
+* **Acceptance criteria**:
+
+  * Count resets exactly at 00:00 user local time.
+  * Sidebar reflects zero count after reset.
+
+### 10.10 secure data storage
+
+* **ID**: US-010
+* **Description**: As a user, I want my API credentials stored securely so that unauthorized parties cannot access them.
+* **Acceptance criteria**:
+
+  * Credentials are encrypted in Chrome secure storage.
+  * Unauthorized access attempts fail.
+  * Users can revoke stored credentials in settings.
