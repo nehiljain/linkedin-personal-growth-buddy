@@ -87,6 +87,13 @@ Inspired by tools like Twemex and Blackmagic.so, this extension aims to replicat
 * **Configuration panel** (Priority: Low)
 
   * Allow users to configure API endpoint, daily goal, and authentication settings.
+* **Backend REST API** (Priority: High)
+
+  * Provide a `/events` POST endpoint to receive comment events from the extension.
+  * Persist events to Supabase with user ID, timestamp, and metadata.
+  * Provide a `/events` GET endpoint for retrieving a user's events (for future analytics).
+  * Secure endpoints with API key or OAuth.
+  * Handle Supabase errors and retries gracefully.
 
 ## 5. User experience
 
@@ -102,7 +109,7 @@ Inspired by tools like Twemex and Blackmagic.so, this extension aims to replicat
 * **Detect comment submission**: When the user posts a comment, the extension increments the count.
 
   * The count update animates the progress bar to reinforce achievement.
-* **View progress**: Sidebar displays “X of Y comments today” and a colored progress bar.
+* **View progress**: Sidebar displays "X of Y comments today" and a colored progress bar.
 
   * Progress bar fills from left to right; turns green when goal reached.
 * **Collapse sidebar**: User can collapse manually or let it auto-hide to avoid distraction.
@@ -169,9 +176,18 @@ Jordan is a content marketer who wants to boost their LinkedIn engagement by con
 
 ### 8.4 Potential challenges
 
-* Changes to LinkedIn’s DOM structure breaking detection logic.
+* Changes to LinkedIn's DOM structure breaking detection logic.
 * Rate-limiting by API endpoint if usage spikes.
 * Handling user time zones for daily resets.
+
+### 8.5 Backend architecture
+
+* The backend will be implemented as a REST API using AWS Chalice (Python microframework for AWS Lambda + API Gateway).
+* All comment event data will be persisted in Supabase (PostgreSQL) via the Supabase Python client.
+* The API will expose endpoints for event ingestion and retrieval, with authentication via API key or OAuth.
+* Environment variables for Supabase credentials will be managed securely in AWS Lambda via Chalice config.
+* The backend will be deployed using Chalice's "zero-DevOps" workflow (no manual CloudFormation/Terraform).
+* Python dependencies will be managed using `uv` for reproducible, fast installs.
 
 ## 9. Milestones & sequencing
 
@@ -255,7 +271,7 @@ Jordan is a content marketer who wants to boost their LinkedIn engagement by con
 ### 10.6 view progress bar
 
 * **ID**: US-006
-* **Description**: As a user, I want to see a progress bar showing “current/goal” so that I can gauge my performance.
+* **Description**: As a user, I want to see a progress bar showing "current/goal" so that I can gauge my performance.
 * **Acceptance criteria**:
 
   * Progress bar fills proportionally to comment count.
@@ -298,3 +314,14 @@ Jordan is a content marketer who wants to boost their LinkedIn engagement by con
   * Credentials are encrypted in Chrome secure storage.
   * Unauthorized access attempts fail.
   * Users can revoke stored credentials in settings.
+
+### 10.11 backend event persistence
+
+* **ID**: US-011
+* **Description**: As a developer, I want a backend REST API that persists comment events to Supabase so that data is reliably stored and retrievable.
+* **Acceptance criteria**:
+
+  * API exposes `/events` POST endpoint.
+  * Events are stored in Supabase with correct schema.
+  * API is secured and environment variables are managed safely.
+  * API can be deployed and updated with a single command.

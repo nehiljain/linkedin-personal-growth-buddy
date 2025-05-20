@@ -1,0 +1,11 @@
+{
+  "version": "2.0",
+  "app_name": "linkedin-comment-tracker-backend",
+  "stages": {
+    "dev": {
+      "api_gateway_stage": "api",
+      "profile": "default",
+      "region": "us-west-1"
+    }
+  }
+} 

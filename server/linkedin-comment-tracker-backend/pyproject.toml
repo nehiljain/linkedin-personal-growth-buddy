@@ -1,0 +1,10 @@
+[project]
+name = "linkedin-comment-tracker-backend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "boto3>=1.38.19",
+    "chalice>=1.31.4",
+]
