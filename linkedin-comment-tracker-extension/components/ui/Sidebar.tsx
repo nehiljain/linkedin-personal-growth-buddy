@@ -2,19 +2,76 @@
 declare global {
   interface Window {
     __LINKEDIN_COMMENT_TRACKER__?: { open: boolean };
+    loggedInUser?: { profile: string };
   }
 }
+declare const chrome: any;
 
 import * as React from "react";
 import { useEffect, useState } from "react";
+import { Progress } from "./progress";
+import { Input } from "./input";
 
 export function Sidebar() {
+  // --- State for goal and count ---
+  const today = new Date().toLocaleDateString('en-CA');
+  const todayKey = `comment-tracker-count-${today}`;
+  const [goal, setGoal] = useState(() => {
+    const stored = localStorage.getItem("comment-tracker-goal");
+    return stored ? parseInt(stored, 10) : 5;
+  });
+  const [count, setCount] = useState(() => {
+    const stored = localStorage.getItem(todayKey);
+    return stored ? parseInt(stored, 10) : 0;
+  });
   const [open, setOpen] = useState(
     window.__LINKEDIN_COMMENT_TRACKER__ && typeof window.__LINKEDIN_COMMENT_TRACKER__.open === 'boolean'
       ? window.__LINKEDIN_COMMENT_TRACKER__.open
       : true
   );
 
+  // --- Helper: get logged-in user profile from window or localStorage ---
+  function getLoggedInUserProfile() {
+    // Try window global first
+    if (window.loggedInUser && window.loggedInUser.profile) return window.loggedInUser.profile;
+    // Try to get from localStorage (if you store it)
+    const stored = localStorage.getItem('linkedin_comment_tracker_logged_in_profile');
+    if (stored) return stored;
+    // Fallback: try to find from DOM
+    const meNav = document.querySelector('a.global-nav__me-photo, a[data-control-name="nav_settings_profile"]');
+    if (meNav) return meNav.getAttribute('href') || '';
+    return '';
+  }
+
+  // --- Effect: fetch count from backend ---
+  useEffect(() => {
+    async function fetchCount() {
+      const author_profile = getLoggedInUserProfile();
+      if (!author_profile) return;
+      try {
+        chrome.runtime.sendMessage(
+          { type: 'GET_DAILY_COUNT', author_profile, date: today },
+          (response) => {
+            if (response && typeof response.count === 'number') {
+              setCount(response.count);
+              localStorage.setItem(todayKey, String(response.count));
+            } else {
+              // Fallback to localStorage
+              const stored = localStorage.getItem(todayKey);
+              setCount(stored ? parseInt(stored, 10) : 0);
+            }
+          }
+        );
+      } catch (e) {
+        // Fallback to localStorage
+        const stored = localStorage.getItem(todayKey);
+        setCount(stored ? parseInt(stored, 10) : 0);
+      }
+    }
+    fetchCount();
+  }, [todayKey]);
+
+  // --- Effect: listen for sidebar toggle ---
   useEffect(() => {
     const handler = () => {
       setOpen((prev) => {
@@ -26,6 +83,42 @@ export function Sidebar() {
     window.addEventListener("toggleSidebar", handler);
     return () => window.removeEventListener("toggleSidebar", handler);
   }, []);
+
+  // --- Effect: listen for new comment event and update count from backend ---
+  useEffect(() => {
+    const updateCount = () => {
+      const author_profile = getLoggedInUserProfile();
+      if (!author_profile) return;
+      chrome.runtime.sendMessage(
+        { type: 'GET_DAILY_COUNT', author_profile, date: today },
+        (response) => {
+          if (response && typeof response.count === 'number') {
+            setCount(response.count);
+            localStorage.setItem(todayKey, String(response.count));
+          } else {
+            // Fallback to localStorage
+            const stored = localStorage.getItem(todayKey);
+            setCount(stored ? parseInt(stored, 10) : 0);
+          }
+        }
+      );
+    };
+    window.addEventListener("comment-tracker-new-comment", updateCount);
+    return () => window.removeEventListener("comment-tracker-new-comment", updateCount);
+  }, [todayKey]);
+
+  // --- Effect: persist goal ---
+  useEffect(() => {
+    localStorage.setItem("comment-tracker-goal", String(goal));
+  }, [goal]);
+
+  // --- Progress calculation ---
+  const percent = goal > 0 ? Math.min((count / goal) * 100, 100) : 0;
+  let progressColor = "bg-red-500";
+  if (percent >= 100) progressColor = "bg-green-500";
+  else if (percent >= 50) progressColor = "bg-yellow-400";
+
+  // --- Animate progress bar (shadcn Progress supports transitions) ---
 
   if (!open) return null;
 
@@ -74,8 +167,37 @@ export function Sidebar() {
         </button>
       </div>
       <div style={{ flex: 1, padding: "2rem", textAlign: "center" }}>
-        <span style={{ fontSize: 24, fontWeight: 700, marginBottom: 8, display: "block" }}>Welcome! 🎉</span>
-        <span style={{ color: "#666" }}>Track and gamify your daily LinkedIn comments.<br />Click the tab in the navbar to open/close this sidebar.</span>
+        <div style={{ marginBottom: 24 }}>
+          <span style={{ fontSize: 20, fontWeight: 600 }}>Daily Comment Goal</span>
+          <div style={{ marginTop: 12, marginBottom: 12 }}>
+            <Input
+              type="number"
+              min={1}
+              value={goal}
+              onChange={e => {
+                const val = parseInt(e.target.value, 10);
+                if (!isNaN(val) && val > 0) setGoal(val);
+              }}
+              style={{ width: 80, textAlign: "center", fontSize: 18, fontWeight: 500 }}
+            />
+          </div>
+        </div>
+        <div style={{ marginBottom: 16 }}>
+          <span style={{ fontSize: 16 }}>Comments today: <b>{count}</b></span>
+        </div>
+        <div style={{ marginBottom: 8 }}>
+          <Progress value={percent} className="h-6 w-full transition-all duration-500" />
+          <div className="relative w-full" style={{ marginTop: -24 }}>
+            <div
+              className={`absolute left-0 top-0 h-6 rounded transition-colors duration-500 ${progressColor}`}
+              style={{ width: `${percent}%`, zIndex: -1 }}
+            />
+            <span style={{ position: "absolute", left: "50%", top: 0, transform: "translateX(-50%)", fontWeight: 600, color: percent >= 50 ? '#222' : '#fff', width: '100%' }}>{Math.round(percent)}%</span>
+          </div>
+        </div>
+        <div style={{ marginTop: 32, color: "#666", fontSize: 14 }}>
+          <span>Track and gamify your daily LinkedIn comments.<br />Your progress resets every day.</span>
+        </div>
       </div>
     </div>
   );

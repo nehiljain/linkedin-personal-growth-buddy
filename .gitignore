@@ -38,4 +38,8 @@ out/
 
 # Task files
 tasks.json
-tasks/ 
+tasks/
+
+# Python cache and bytecode
+__pycache__/
+*.pyc 
