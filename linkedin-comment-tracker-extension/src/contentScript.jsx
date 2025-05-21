@@ -342,3 +342,10 @@ document.addEventListener('click', function(e) {
     }, 200); // 200ms delay to allow DOM update
   }
 });
+
+// Listen for COMMENT_COUNT_UPDATED and forward as CustomEvent for Sidebar
+chrome.runtime.onMessage.addListener((request) => {
+  if (request.type === 'COMMENT_COUNT_UPDATED' && typeof request.count === 'number') {
+    window.dispatchEvent(new CustomEvent('comment-tracker-new-comment', { detail: { count: request.count } }));
+  }
+});

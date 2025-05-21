@@ -4,6 +4,8 @@ from chalice import Chalice, Response, CORSConfig
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import re
+import pytz
+from urllib.parse import urljoin
 
 load_dotenv()
 
@@ -119,6 +121,9 @@ def comment_event():
     elif req.method == 'GET':
         params = req.query_params or {}
         author_profile = params.get('author_profile')
+        # Normalize author_profile to full LinkedIn URL if needed
+        if author_profile and not author_profile.startswith('https://www.linkedin.com/'):
+            author_profile = urljoin('https://www.linkedin.com/', author_profile)
         limit = params.get('limit')
         offset = params.get('offset')
         start_date = params.get('start_date')
@@ -165,15 +170,30 @@ def comment_event():
 def comment_count():
     params = app.current_request.query_params or {}
     author_profile = params.get('author_profile')
+    # Normalize author_profile to full LinkedIn URL if needed
+    if author_profile and not author_profile.startswith('https://www.linkedin.com/'):
+        author_profile = urljoin('https://www.linkedin.com/', author_profile)
     date = params.get('date')
+    timezone = params.get('timezone')  # e.g., 'America/New_York'
     if not author_profile or not date:
         return Response(body={'error': 'Missing required query params: author_profile and date'}, status_code=400)
     try:
-        # Parse the date and get the next day for the range
-        start_dt = datetime.strptime(date, '%Y-%m-%d')
-        end_dt = start_dt + timedelta(days=1)
-        start_iso = start_dt.isoformat()
-        end_iso = end_dt.isoformat()
+        # Default to UTC if timezone is missing or invalid
+        if timezone:
+            try:
+                local_tz = pytz.timezone(timezone)
+            except Exception:
+                local_tz = pytz.UTC
+        else:
+            local_tz = pytz.UTC
+        # Parse the local date in the user's timezone
+        start_local = local_tz.localize(datetime.strptime(date, '%Y-%m-%d'))
+        end_local = start_local + timedelta(days=1)
+        # Convert to UTC for DB query
+        start_utc = start_local.astimezone(pytz.UTC)
+        end_utc = end_local.astimezone(pytz.UTC)
+        start_iso = start_utc.isoformat()
+        end_iso = end_utc.isoformat()
         query = (
             supabase.table('comments')
             .select('id')

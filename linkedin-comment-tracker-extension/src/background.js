@@ -48,6 +48,23 @@ async function postCommentEventToBackend(event) {
   }
 }
 
+// Helper: fetch and broadcast new count to all tabs
+async function fetchAndBroadcastCount(author_profile, date, timezone) {
+  const url = `${BACKEND_URL.replace('/comment-event', '/comment-count')}?author_profile=${encodeURIComponent(author_profile)}&date=${encodeURIComponent(date)}&timezone=${encodeURIComponent(timezone || '')}`;
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    chrome.tabs.query({}, function(tabs) {
+      for (let tab of tabs) {
+        chrome.tabs.sendMessage(tab.id, { type: 'COMMENT_COUNT_UPDATED', count: data.count });
+      }
+    });
+  } catch (e) {
+    // Optionally handle error
+    console.error('[LinkedIn Comment Tracker][DEBUG][BG] Error broadcasting count:', e);
+  }
+}
+
 // Non-blocking flush with retry and exponential backoff
 async function flushOutbox() {
   let queue = await getOutbox();
@@ -65,6 +82,14 @@ async function flushOutbox() {
     console.log('[LinkedIn Comment Tracker][DEBUG][BG] Event removed from outbox after successful POST:', event);
     // Immediately try next event
     setTimeout(flushOutbox, 100);
+    // After successful POST, fetch and broadcast new count
+    const today = new Date().toLocaleDateString('en-CA');
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    // Use event.author_profile_url if available, else fallback to event.author_profile
+    const author_profile = event.author_profile_url || event.author_profile;
+    if (author_profile) {
+      fetchAndBroadcastCount(author_profile, today, timezone);
+    }
   } catch (e) {
     // Exponential backoff for retries
     const retryCount = (event.retryCount || 0) + 1;
@@ -88,19 +113,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "GET_DAILY_COUNT" && message.author_profile && message.date) {
     (async () => {
       try {
-        const url = `${BACKEND_URL.replace('/comment-event', '/comment-count')}?author_profile=${encodeURIComponent(message.author_profile)}&date=${encodeURIComponent(message.date)}`;
+        const url = `${BACKEND_URL.replace('/comment-event', '/comment-count')}?author_profile=${encodeURIComponent(message.author_profile)}&date=${encodeURIComponent(message.date)}&timezone=${encodeURIComponent(message.timezone || '')}`;
         console.log('[LinkedIn Comment Tracker][DEBUG][BG] Fetching daily count from backend:', url);
         const res = await fetch(url);
         if (res.ok) {
           const data = await res.json();
-          console.log('[LinkedIn Comment Tracker][DEBUG][BG] Received daily count from backend:', data);
+          console.log('[LinkedIn Comment Tracker][DEBUG][BG] Sending response to Sidebar:', { count: data.count });
           sendResponse({ count: data.count });
         } else {
-          console.error('[LinkedIn Comment Tracker][DEBUG][BG] Backend error fetching daily count:', res.status);
+          console.log('[LinkedIn Comment Tracker][DEBUG][BG] Sending error response to Sidebar');
           sendResponse({ count: null, error: 'Backend error' });
         }
       } catch (e) {
-        console.error('[LinkedIn Comment Tracker][DEBUG][BG] Error fetching daily count:', e);
+        console.log('[LinkedIn Comment Tracker][DEBUG][BG] Exception, sending error response to Sidebar:', e);
         sendResponse({ count: null, error: e.message });
       }
     })();
@@ -109,9 +134,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-setInterval(flushOutbox, 30000);
-chrome.runtime.onStartup?.addListener?.(flushOutbox);
-chrome.runtime.onInstalled?.addListener?.(flushOutbox);
+// Comment out or remove polling to minimize compute/IO load
+// setInterval(flushOutbox, 30000);
+// chrome.runtime.onStartup?.addListener?.(flushOutbox);
+// chrome.runtime.onInstalled?.addListener?.(flushOutbox);
 // Note: window.addEventListener('online', ...) is not available in service workers
 // For network reconnect, consider using chrome.alarms or polling if needed
 

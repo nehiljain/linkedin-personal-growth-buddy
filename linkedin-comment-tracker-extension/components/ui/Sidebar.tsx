@@ -47,17 +47,24 @@ export function Sidebar() {
   useEffect(() => {
     async function fetchCount() {
       const author_profile = getLoggedInUserProfile();
-      if (!author_profile) return;
+      if (!author_profile) {
+        console.log('[LinkedIn Comment Tracker][SIDEBAR] No author_profile found, skipping fetchCount.');
+        return;
+      }
       try {
+        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        console.log('[LinkedIn Comment Tracker][SIDEBAR] Sending GET_DAILY_COUNT:', { author_profile, date: today, timezone });
         chrome.runtime.sendMessage(
-          { type: 'GET_DAILY_COUNT', author_profile, date: today },
+          { type: 'GET_DAILY_COUNT', author_profile, date: today, timezone },
           (response) => {
+            console.log('[LinkedIn Comment Tracker][SIDEBAR] Received response from background for GET_DAILY_COUNT:', response);
             if (response && typeof response.count === 'number') {
               setCount(response.count);
               localStorage.setItem(todayKey, String(response.count));
             } else {
               // Fallback to localStorage
               const stored = localStorage.getItem(todayKey);
+              console.log('[LinkedIn Comment Tracker][SIDEBAR] Falling back to localStorage for count:', stored);
               setCount(stored ? parseInt(stored, 10) : 0);
             }
           }
@@ -65,6 +72,7 @@ export function Sidebar() {
       } catch (e) {
         // Fallback to localStorage
         const stored = localStorage.getItem(todayKey);
+        console.log('[LinkedIn Comment Tracker][SIDEBAR] Exception in fetchCount, falling back to localStorage:', e, stored);
         setCount(stored ? parseInt(stored, 10) : 0);
       }
     }
@@ -88,16 +96,23 @@ export function Sidebar() {
   useEffect(() => {
     const updateCount = () => {
       const author_profile = getLoggedInUserProfile();
-      if (!author_profile) return;
+      if (!author_profile) {
+        console.log('[LinkedIn Comment Tracker][SIDEBAR] No author_profile found, skipping updateCount.');
+        return;
+      }
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      console.log('[LinkedIn Comment Tracker][SIDEBAR] Sending GET_DAILY_COUNT (updateCount):', { author_profile, date: today, timezone });
       chrome.runtime.sendMessage(
-        { type: 'GET_DAILY_COUNT', author_profile, date: today },
+        { type: 'GET_DAILY_COUNT', author_profile, date: today, timezone },
         (response) => {
+          console.log('[LinkedIn Comment Tracker][SIDEBAR] Received response from background for GET_DAILY_COUNT (updateCount):', response);
           if (response && typeof response.count === 'number') {
             setCount(response.count);
             localStorage.setItem(todayKey, String(response.count));
           } else {
             // Fallback to localStorage
             const stored = localStorage.getItem(todayKey);
+            console.log('[LinkedIn Comment Tracker][SIDEBAR] Falling back to localStorage for count (updateCount):', stored);
             setCount(stored ? parseInt(stored, 10) : 0);
           }
         }
@@ -111,6 +126,19 @@ export function Sidebar() {
   useEffect(() => {
     localStorage.setItem("comment-tracker-goal", String(goal));
   }, [goal]);
+
+  // --- Effect: listen for COMMENT_COUNT_UPDATED from background ---
+  useEffect(() => {
+    function handleMessage(request) {
+      if (request.type === 'COMMENT_COUNT_UPDATED' && typeof request.count === 'number') {
+        console.log('[LinkedIn Comment Tracker][SIDEBAR] Received COMMENT_COUNT_UPDATED:', request.count);
+        setCount(request.count);
+        localStorage.setItem(todayKey, String(request.count));
+      }
+    }
+    chrome.runtime.onMessage.addListener(handleMessage);
+    return () => chrome.runtime.onMessage.removeListener(handleMessage);
+  }, [todayKey]);
 
   // --- Progress calculation ---
   const percent = goal > 0 ? Math.min((count / goal) * 100, 100) : 0;
