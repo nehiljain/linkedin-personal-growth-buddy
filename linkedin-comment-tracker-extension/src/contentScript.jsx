@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { NavbarTab } from "@components/ui/NavbarTab";
 import { Sidebar } from "@components/ui/Sidebar";
 import "./index.css";
+import { addComment, getUnsyncedComments, markCommentsSynced, deleteSyncedComments, getLoggedInUser, setOrUpdateLoggedInUser } from "./lib/idb";
 
 // Shared state for sidebar
 window.__LINKEDIN_COMMENT_TRACKER__ = window.__LINKEDIN_COMMENT_TRACKER__ || { open: true };
@@ -43,85 +44,199 @@ const observer = new MutationObserver(() => {
 });
 observer.observe(document.body, { childList: true, subtree: true });
 
-// --- Detect logged-in user profile ---
+// --- Robust logged-in user detection and caching ---
 let loggedInUser = { name: '', profile: '' };
-(function detectLoggedInUser() {
-  // Try to get from navbar
-  const meNav = document.querySelector('a.global-nav__me-photo, a[data-control-name="nav_settings_profile"]');
-  console.log('[LinkedIn Comment Tracker][DEBUG] Trying navbar selector:', meNav);
-  if (meNav) {
-    loggedInUser.profile = meNav.href || meNav.getAttribute('href') || '';
-    loggedInUser.name = meNav.getAttribute('aria-label') || meNav.getAttribute('alt') || '';
-    console.log('[LinkedIn Comment Tracker][DEBUG] Got from meNav:', { name: loggedInUser.name, profile: loggedInUser.profile });
-    if (!loggedInUser.name) {
-      // Try to get from adjacent text
-      const nameNode = meNav.closest('li')?.querySelector('.t-16.t-black.t-bold') || null;
-      console.log('[LinkedIn Comment Tracker][DEBUG] Trying adjacent text for name:', nameNode);
-      if (nameNode) loggedInUser.name = nameNode.innerText.trim();
-    }
-  }
-  // Fallback: try to get from profile dropdown
-  if (!loggedInUser.profile) {
-    const profileLink = document.querySelector('a[href^="/in/"]');
-    console.log('[LinkedIn Comment Tracker][DEBUG] Trying fallback profile link:', profileLink);
-    if (profileLink) {
-      loggedInUser.profile = profileLink.getAttribute('href');
-      loggedInUser.name = profileLink.innerText.trim();
-      console.log('[LinkedIn Comment Tracker][DEBUG] Got from profileLink:', { name: loggedInUser.name, profile: loggedInUser.profile });
-    }
-  }
-  window.loggedInUser = loggedInUser;
-  console.log('[LinkedIn Comment Tracker] Detected logged-in user:', loggedInUser);
-})();
+let profileCardPollingInterval = null;
 
-// --- Helpers for persistent comment storage ---
-function getStoredComments() {
-  try {
-    return JSON.parse(localStorage.getItem('linkedin_comment_tracker_comments') || '[]');
-  } catch {
-    return [];
+// Robust extraction from profile card member details
+function extractAuthorFromProfileCard() {
+  const cards = document.querySelectorAll('.profile-card-member-details');
+  for (const card of cards) {
+    const links = card.querySelectorAll('a[href^="/in/"]');
+    for (const link of links) {
+      const nameNode = link.querySelector('h3.profile-card-name');
+      if (nameNode) {
+        const name = nameNode.innerText.trim();
+        const profile = new URL(link.getAttribute('href'), window.location.origin).href;
+        if (name || profile) {
+          console.log('[LinkedIn Comment Tracker][DEBUG] Found author in profile card:', { name, profile });
+          return { name, profile };
+        }
+      }
+    }
   }
+  return { name: '', profile: '' };
 }
 
-const BACKEND_URL = "http://localhost:8000/comment-event"; // Change to prod URL when deploying
+// Centralized user detection from DOM/sidebar/code block
+function detectUserFromDOM() {
+  // Try navbar
+  const meNav = document.querySelector('a.global-nav__me-photo, a[data-control-name="nav_settings_profile"]');
+  if (meNav) {
+    let name = meNav.getAttribute('aria-label') || meNav.getAttribute('alt') || '';
+    if (!name) {
+      const nameNode = meNav.closest('li')?.querySelector('.t-16.t-black.t-bold') || null;
+      if (nameNode) name = nameNode.innerText.trim();
+    }
+    const profile = meNav.href || meNav.getAttribute('href') || '';
+    if (name || profile) return { name, profile };
+  }
+  // Try profile dropdown
+  const profileLink = document.querySelector('a[href^="/in/"]');
+  if (profileLink) {
+    const name = profileLink.innerText.trim();
+    const profile = profileLink.getAttribute('href');
+    if (name || profile) return { name, profile };
+  }
+  // Try robust profile card extraction
+  const cardAuthor = extractAuthorFromProfileCard();
+  if (cardAuthor.name || cardAuthor.profile) return cardAuthor;
+  // Try hidden code block
+  const codeBlocks = Array.from(document.querySelectorAll('code[id^="bpr-guid-"]'));
+  for (const code of codeBlocks) {
+    try {
+      const json = JSON.parse(code.textContent);
+      if (json.included && Array.isArray(json.included)) {
+        for (const obj of json.included) {
+          if (obj.$type && obj.$type.includes('MiniProfile')) {
+            const firstName = obj.firstName || '';
+            const lastName = obj.lastName || '';
+            const publicIdentifier = obj.publicIdentifier || '';
+            const name = `${firstName} ${lastName}`.trim();
+            const profile = publicIdentifier ? `https://www.linkedin.com/in/${publicIdentifier}` : '';
+            if (name || profile) return { name, profile };
+          }
+        }
+      }
+    } catch (e) {}
+  }
+  return { name: '', profile: '' };
+}
+
+async function ensureLoggedInUser() {
+  const cachedUser = await getLoggedInUser();
+  if (cachedUser && (cachedUser.name || cachedUser.profile)) {
+    loggedInUser = { name: cachedUser.name || '', profile: cachedUser.profile || '' };
+    return loggedInUser;
+  }
+  // Try to detect
+  const detected = detectUserFromDOM();
+  if (detected.name || detected.profile) {
+    await setOrUpdateLoggedInUser(detected);
+    loggedInUser = detected;
+    return loggedInUser;
+  }
+  // No info found
+  loggedInUser = { name: '', profile: '' };
+  return loggedInUser;
+}
+
+async function pollForProfileCardUser() {
+  // Only poll if we don't have a cached user
+  const cachedUser = await getLoggedInUser();
+  if (cachedUser && (cachedUser.name || cachedUser.profile)) {
+    return; // Already have a user, no need to poll
+  }
+  if (profileCardPollingInterval) return; // Already polling
+  profileCardPollingInterval = setInterval(async () => {
+    const cardAuthor = extractAuthorFromProfileCard();
+    console.log('[LinkedIn Comment Tracker][POLL] Profile card polling attempt:', cardAuthor);
+    if (cardAuthor.name || cardAuthor.profile) {
+      await setOrUpdateLoggedInUser(cardAuthor);
+      console.log('[LinkedIn Comment Tracker][DEBUG] Profile card user found and cached:', cardAuthor);
+      clearInterval(profileCardPollingInterval);
+      profileCardPollingInterval = null;
+    }
+  }, 10000); // 10 seconds
+}
+
+// On script load, ensure we have the best user info and start polling if needed
+ensureLoggedInUser().then(() => {
+  pollForProfileCardUser();
+});
+
+// Helper to get the cached logged-in user from IndexedDB
+export async function getCachedLoggedInUser() {
+  const user = await getLoggedInUser();
+  if (user) {
+    return { name: user.name || '', profile: user.profile || '' };
+  }
+  return { name: '', profile: '' };
+}
+
+const BACKEND_URL = "https://roomiy-automations-1b3a1f8f45bc.herokuapp.com/webhook/db70d7dc-f4d0-493a-ba0c-c09467da6272-comment-event"; // Production endpoint
+
+// Helper to get Authorization header from storage
+async function getAuthHeader() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(["auth"], (result) => {
+      if (result.auth && result.auth.username && result.auth.password) {
+        resolve("Basic " + btoa(result.auth.username + ":" + result.auth.password));
+      } else {
+        resolve(null);
+      }
+    });
+  });
+}
 
 async function postCommentEventToBackend(comment) {
   try {
+    const authHeader = await getAuthHeader();
     const res = await fetch(BACKEND_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(authHeader ? { "Authorization": authHeader } : {})
+      },
       body: JSON.stringify(comment),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       console.error("[Comment Tracker] Backend POST failed:", res.status, err);
+      return false;
     } else {
       console.log("[Comment Tracker] Successfully posted comment event to backend");
+      return true;
     }
   } catch (e) {
     console.error("[Comment Tracker] Error posting to backend:", e);
+    return false;
   }
 }
 
-function saveComment(comment) {
-  const comments = getStoredComments();
-  // Avoid duplicates by commentId and text
-  if (comment.commentId && comments.some(c => c.commentId === comment.commentId)) return;
-  if (comment.text && comments.some(c => c.text === comment.text && c.author === comment.author)) return;
-  comments.push(comment);
-  localStorage.setItem('linkedin_comment_tracker_comments', JSON.stringify(comments));
-  // Increment today's count (use local date)
-  const todayKey = `comment-tracker-count-${new Date().toLocaleDateString('en-CA')}`;
-  const prev = parseInt(localStorage.getItem(todayKey) || '0', 10);
-  localStorage.setItem(todayKey, String(prev + 1));
-  // Send to background for backend POST and outbox
-  if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
-    chrome.runtime.sendMessage({ type: 'NEW_COMMENT_EVENT', event: comment });
+// Sync unsynced comments to backend
+async function syncComments() {
+  const unsynced = await getUnsyncedComments();
+  if (unsynced.length === 0) return;
+  const successfulIds = [];
+  for (const comment of unsynced) {
+    const ok = await postCommentEventToBackend(comment);
+    if (ok) successfulIds.push(comment.id);
   }
-  // Notify Sidebar to update count
-  window.dispatchEvent(new CustomEvent('comment-tracker-new-comment'));
+  if (successfulIds.length > 0) {
+    await markCommentsSynced(successfulIds);
+    await deleteSyncedComments();
+
+    // --- Trigger count update after syncing and deleting ---
+    const user = await getLoggedInUser();
+    if (user && user.profile) {
+      const today = new Date().toLocaleDateString('en-CA');
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      chrome.runtime.sendMessage({
+        type: 'GET_DAILY_COUNT',
+        author_profile: user.profile,
+        date: today,
+        timezone
+      });
+      // The background script will broadcast COMMENT_COUNT_UPDATED, which the sidebar listens for.
+    }
+  }
 }
-window.getDetectedComments = getStoredComments;
+
+// Periodic sync (every 30 seconds)
+setInterval(syncComments, 30000);
+// Sync on page unload
+window.addEventListener("beforeunload", syncComments);
 
 // Utility: Find the post container for a comment node (works for feed and post pages)
 function getPostContainerUniversal(commentNode) {
@@ -149,17 +264,50 @@ function getPostContainerUniversal(commentNode) {
 
 // Universal post author extraction
 function extractPostAuthorInfoUniversal(container) {
-  if (!container) return { post_author_name: '', post_author_profile: '' };
-  // Try post page selectors first
-  let authorLink = container.querySelector('.update-components-actor__meta-link[href]');
-  let authorName = container.querySelector('.update-components-actor__title span[dir="ltr"]');
-  // Fallback to feed selectors
-  if (!authorLink) authorLink = container.querySelector('span.feed-shared-actor__name a, a.update-components-actor__meta-link, a.update-components-actor__image');
-  if (!authorName) authorName = container.querySelector('span.feed-shared-actor__name, .update-components-actor__title');
-  return {
-    post_author_name: authorName?.innerText?.trim() || '',
-    post_author_profile: authorLink?.href || ''
-  };
+  // Option 1: Post page selectors
+  let authorLink = container?.querySelector('.update-components-actor__meta-link[href]');
+  let authorName = container?.querySelector('.update-components-actor__title span[dir="ltr"]');
+  if (authorLink && authorName) {
+    return {
+      post_author_name: authorName.innerText?.trim() || '',
+      post_author_profile: authorLink.href || ''
+    };
+  }
+  // Option 2: Feed selectors
+  authorLink = container?.querySelector('span.feed-shared-actor__name a, a.update-components-actor__meta-link, a.update-components-actor__image');
+  authorName = container?.querySelector('span.feed-shared-actor__name, .update-components-actor__title');
+  if (authorLink && authorName) {
+    return {
+      post_author_name: authorName.innerText?.trim() || '',
+      post_author_profile: authorLink.href || ''
+    };
+  }
+  // Option 3: Hidden <code> block with MiniProfile JSON
+  const codeBlocks = Array.from(document.querySelectorAll('code[id^="bpr-guid-"]'));
+  for (const code of codeBlocks) {
+    try {
+      const json = JSON.parse(code.textContent);
+      if (json.included && Array.isArray(json.included)) {
+        for (const obj of json.included) {
+          if (obj.$type && obj.$type.includes('MiniProfile')) {
+            const firstName = obj.firstName || '';
+            const lastName = obj.lastName || '';
+            const publicIdentifier = obj.publicIdentifier || '';
+            if (publicIdentifier) {
+              return {
+                post_author_name: `${firstName} ${lastName}`.trim(),
+                post_author_profile: `https://www.linkedin.com/in/${publicIdentifier}`
+              };
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // Ignore parse errors
+    }
+  }
+  // Option 4: Empty fallback
+  return { post_author_name: '', post_author_profile: '' };
 }
 
 // Universal post content extraction
@@ -310,6 +458,8 @@ document.addEventListener('click', function(e) {
         comment_author_name = sidebarInfo.name;
         comment_author_profile = sidebarInfo.profile;
         console.log('[LinkedIn Comment Tracker][DEBUG] Fallback to sidebar profile info:', sidebarInfo);
+        // If IndexedDB user cache is empty or different, set/update it now
+        setOrUpdateLoggedInUser({ name: sidebarInfo.name, profile: sidebarInfo.profile });
       }
 
       // Final fallback
@@ -332,13 +482,8 @@ document.addEventListener('click', function(e) {
         post_content: postContent
       };
       console.log('[LinkedIn Comment Tracker][DEBUG] Final payload for backend:', payload);
-      if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
-        chrome.runtime.sendMessage({ type: 'NEW_COMMENT_EVENT', event: payload }, (response) => {
-          console.log('[LinkedIn Comment Tracker][DEBUG] Sent NEW_COMMENT_EVENT to background.js, response:', response);
-        });
-      } else {
-        console.warn('[LinkedIn Comment Tracker][ERROR] chrome.runtime.sendMessage not available');
-      }
+      // Store in IndexedDB and trigger sync
+      addComment(payload).then(syncComments);
     }, 200); // 200ms delay to allow DOM update
   }
 });
@@ -347,5 +492,17 @@ document.addEventListener('click', function(e) {
 chrome.runtime.onMessage.addListener((request) => {
   if (request.type === 'COMMENT_COUNT_UPDATED' && typeof request.count === 'number') {
     window.dispatchEvent(new CustomEvent('comment-tracker-new-comment', { detail: { count: request.count } }));
+  }
+});
+
+// Listen for GET_LOGGED_IN_USER messages from the sidebar
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message && message.type === 'GET_LOGGED_IN_USER') {
+    console.log('[LinkedIn Comment Tracker][CONTENT SCRIPT][onMessage] Received GET_LOGGED_IN_USER');
+    getLoggedInUser().then(user => {
+      console.log('[LinkedIn Comment Tracker][CONTENT SCRIPT][onMessage] Responding with user:', user);
+      sendResponse(user || { name: '', profile: '' });
+    });
+    return true; // Indicates async response
   }
 });

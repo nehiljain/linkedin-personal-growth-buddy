@@ -6,6 +6,7 @@ module.exports = {
   entry: {
     content: './src/contentScript.jsx',
     background: './src/background.js',
+    popup: './src/index.js',
   },
   output: {
     path: path.resolve(__dirname, 'dist'),

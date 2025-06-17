@@ -30,23 +30,44 @@ export function Sidebar() {
       : true
   );
 
-  // --- Helper: get logged-in user profile from window or localStorage ---
-  function getLoggedInUserProfile() {
-    // Try window global first
-    if (window.loggedInUser && window.loggedInUser.profile) return window.loggedInUser.profile;
-    // Try to get from localStorage (if you store it)
-    const stored = localStorage.getItem('linkedin_comment_tracker_logged_in_profile');
-    if (stored) return stored;
-    // Fallback: try to find from DOM
-    const meNav = document.querySelector('a.global-nav__me-photo, a[data-control-name="nav_settings_profile"]');
-    if (meNav) return meNav.getAttribute('href') || '';
-    return '';
+  // --- Helper: get logged-in user profile from content script via messaging ---
+  async function getLoggedInUserProfile(): Promise<string> {
+    // Try window global first (for backward compatibility)
+    if (window.loggedInUser && window.loggedInUser.profile) {
+      console.log('[LinkedIn Comment Tracker][SIDEBAR][getLoggedInUserProfile] Found in window:', window.loggedInUser.profile);
+      return window.loggedInUser.profile;
+    }
+    // Try to get from content script via messaging
+    return new Promise((resolve) => {
+      console.log('[LinkedIn Comment Tracker][SIDEBAR][getLoggedInUserProfile] Sending GET_LOGGED_IN_USER message');
+      chrome.runtime.sendMessage({ type: 'GET_LOGGED_IN_USER' }, (user) => {
+        console.log('[LinkedIn Comment Tracker][SIDEBAR][getLoggedInUserProfile] Received response:', user);
+        if (user && user.profile) {
+          resolve(user.profile);
+        } else {
+          // Fallback: try localStorage or DOM
+          const stored = localStorage.getItem('linkedin_comment_tracker_logged_in_profile');
+          if (stored) {
+            console.log('[LinkedIn Comment Tracker][SIDEBAR][getLoggedInUserProfile] Fallback to localStorage:', stored);
+            return resolve(stored);
+          }
+          const meNav = document.querySelector('a.global-nav__me-photo, a[data-control-name="nav_settings_profile"]');
+          if (meNav) {
+            const href = meNav.getAttribute('href') || '';
+            console.log('[LinkedIn Comment Tracker][SIDEBAR][getLoggedInUserProfile] Fallback to DOM:', href);
+            return resolve(href);
+          }
+          console.log('[LinkedIn Comment Tracker][SIDEBAR][getLoggedInUserProfile] No author_profile found in any method.');
+          resolve('');
+        }
+      });
+    });
   }
 
   // --- Effect: fetch count from backend ---
   useEffect(() => {
     async function fetchCount() {
-      const author_profile = getLoggedInUserProfile();
+      const author_profile = await getLoggedInUserProfile();
       if (!author_profile) {
         console.log('[LinkedIn Comment Tracker][SIDEBAR] No author_profile found, skipping fetchCount.');
         return;
@@ -95,28 +116,30 @@ export function Sidebar() {
   // --- Effect: listen for new comment event and update count from backend ---
   useEffect(() => {
     const updateCount = () => {
-      const author_profile = getLoggedInUserProfile();
-      if (!author_profile) {
-        console.log('[LinkedIn Comment Tracker][SIDEBAR] No author_profile found, skipping updateCount.');
-        return;
-      }
-      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      console.log('[LinkedIn Comment Tracker][SIDEBAR] Sending GET_DAILY_COUNT (updateCount):', { author_profile, date: today, timezone });
-      chrome.runtime.sendMessage(
-        { type: 'GET_DAILY_COUNT', author_profile, date: today, timezone },
-        (response) => {
-          console.log('[LinkedIn Comment Tracker][SIDEBAR] Received response from background for GET_DAILY_COUNT (updateCount):', response);
-          if (response && typeof response.count === 'number') {
-            setCount(response.count);
-            localStorage.setItem(todayKey, String(response.count));
-          } else {
-            // Fallback to localStorage
-            const stored = localStorage.getItem(todayKey);
-            console.log('[LinkedIn Comment Tracker][SIDEBAR] Falling back to localStorage for count (updateCount):', stored);
-            setCount(stored ? parseInt(stored, 10) : 0);
-          }
+      (async () => {
+        const author_profile = await getLoggedInUserProfile();
+        if (!author_profile) {
+          console.log('[LinkedIn Comment Tracker][SIDEBAR] No author_profile found, skipping updateCount.');
+          return;
         }
-      );
+        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        console.log('[LinkedIn Comment Tracker][SIDEBAR] Sending GET_DAILY_COUNT (updateCount):', { author_profile, date: today, timezone });
+        chrome.runtime.sendMessage(
+          { type: 'GET_DAILY_COUNT', author_profile, date: today, timezone },
+          (response) => {
+            console.log('[LinkedIn Comment Tracker][SIDEBAR] Received response from background for GET_DAILY_COUNT (updateCount):', response);
+            if (response && typeof response.count === 'number') {
+              setCount(response.count);
+              localStorage.setItem(todayKey, String(response.count));
+            } else {
+              // Fallback to localStorage
+              const stored = localStorage.getItem(todayKey);
+              console.log('[LinkedIn Comment Tracker][SIDEBAR] Falling back to localStorage for count (updateCount):', stored);
+              setCount(stored ? parseInt(stored, 10) : 0);
+            }
+          }
+        );
+      })();
     };
     window.addEventListener("comment-tracker-new-comment", updateCount);
     return () => window.removeEventListener("comment-tracker-new-comment", updateCount);

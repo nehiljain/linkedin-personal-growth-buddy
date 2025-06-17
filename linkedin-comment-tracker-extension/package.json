@@ -29,6 +29,7 @@
     "webpack-dev-server": "^5.2.1"
   },
   "scripts": {
-    "build": "webpack --mode=production"
+    "build": "webpack --mode=production",
+    "build:watch": "webpack --watch --mode production"
   }
 }

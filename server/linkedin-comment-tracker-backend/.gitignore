@@ -1,5 +1,0 @@
-.chalice/deployments/
-.chalice/venv/
-# Python cache and bytecode
-__pycache__/
-*.pyc 
